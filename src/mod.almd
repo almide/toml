@@ -4,10 +4,6 @@
 //   toml.encode(config)           → Codec type to TOML string
 //   Config.decode(toml.parse(s)!) → TOML string to Codec type
 
-import string
-import int
-import float
-import list
 import value
 import json
 
