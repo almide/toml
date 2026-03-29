@@ -5,7 +5,7 @@ TOML v1.0 parser and serializer for [Almide](https://github.com/almide/almide). 
 ## Install
 
 ```bash
-almide add toml
+almide add almide/toml
 ```
 
 ## Usage
