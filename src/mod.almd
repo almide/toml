@@ -1,0 +1,477 @@
+// almide/toml — TOML parser and serializer for Almide
+//
+// Codec-compatible: provides parse + stringify, so
+//   toml.encode(config)           → Codec type to TOML string
+//   Config.decode(toml.parse(s)!) → TOML string to Codec type
+
+import string
+import int
+import float
+import list
+import value
+import json
+
+// ── Public API ──────────────────────────────────────
+
+effect fn parse(text: String) -> Result[Value, String] =
+  parse_doc(text, 0, value.object([]), [], false)
+
+fn stringify(v: Value) -> String = {
+  let lines = emit_sections(v, [])
+  if list.is_empty(lines) then "" else list.join(lines, "\n") + "\n"
+}
+
+// ── Scanning primitives ─────────────────────────────
+
+local fn peek(t: String, p: Int) -> String = string.get(t, p) ?? ""
+
+local fn is_ws(c: String) -> Bool = c == " " or c == "\t"
+local fn is_nl(c: String) -> Bool = c == "\n" or c == "\r"
+
+local fn is_bare(c: String) -> Bool =
+  if c == "" then false
+  else string.is_alphanumeric(c) or c == "_" or c == "-"
+
+local fn scan_while(t: String, p: Int, pred: (String) -> Bool) -> Int =
+  if p < string.len(t) and pred(peek(t, p)) then scan_while(t, p + 1, pred)
+  else p
+
+local fn skip_ws(t: String, p: Int) -> Int =
+  scan_while(t, p, (c) => is_ws(c))
+
+local fn skip_to_nl(t: String, p: Int) -> Int =
+  if p >= string.len(t) or is_nl(peek(t, p)) then p
+  else skip_to_nl(t, p + 1)
+
+local fn skip_trivia(t: String, p: Int) -> Int = {
+  if p >= string.len(t) then p
+  else {
+    let c = peek(t, p)
+    if is_ws(c) or is_nl(c) then skip_trivia(t, p + 1)
+    else if c == "#" then skip_trivia(t, skip_to_nl(t, p))
+    else p
+  }
+}
+
+local fn skip_newline(t: String, p: Int) -> Int =
+  if peek(t, p) == "\r" and peek(t, p + 1) == "\n" then p + 2
+  else if is_nl(peek(t, p)) then p + 1
+  else p
+
+local fn skip_rest_of_line(t: String, p: Int) -> Int = {
+  let p2 = skip_ws(t, p)
+  let p3 = if peek(t, p2) == "#" then skip_to_nl(t, p2) else p2
+  skip_newline(t, p3)
+}
+
+local fn scan_token(t: String, p: Int) -> Int = {
+  if p >= string.len(t) then p
+  else {
+    let c = peek(t, p)
+    if is_ws(c) or is_nl(c) or c == "," or c == "]" or c == "}" or c == "#" then p
+    else scan_token(t, p + 1)
+  }
+}
+
+local fn loc(t: String, p: Int) -> String = {
+  let before = if p > 0 then string.slice(t, 0, p) else ""
+  let line = string.count(before, "\n") + 1
+  let col = p - (match string.last_index_of(before, "\n") { some(i) => i, none => -1 })
+  "line ${int.to_string(line)}, col ${int.to_string(col)}"
+}
+
+// ── Document parser (recursive, no mutable state) ───
+
+local effect fn parse_doc(t: String, p: Int, root: Value, tbl: List[String], in_aot: Bool) -> Result[Value, String] = {
+  let p2 = skip_trivia(t, p)
+  if p2 >= string.len(t) then ok(root)
+  else {
+    let c = peek(t, p2)
+    if c == "[" and peek(t, p2 + 1) == "[" then {
+      let (path, np) = parse_table_key(t, p2 + 2, true)!
+      parse_doc(t, skip_rest_of_line(t, np), append_aot(root, path), path, true)
+    }
+    else if c == "[" then {
+      let (path, np) = parse_table_key(t, p2 + 1, false)!
+      parse_doc(t, skip_rest_of_line(t, np), root, path, false)
+    }
+    else {
+      let (keys, p3) = parse_key(t, p2)!
+      let p4 = skip_ws(t, p3)
+      guard peek(t, p4) == "=" else err("expected '=' at ${loc(t, p4)}")
+      let (v, p5) = parse_val(t, skip_ws(t, p4 + 1))!
+      let new_root = if in_aot then set_in_aot_last(root, tbl, keys, v)
+                     else set_nested(root, tbl + keys, v)
+      parse_doc(t, skip_rest_of_line(t, p5), new_root, tbl, in_aot)
+    }
+  }
+}
+
+// ── Table header ────────────────────────────────────
+
+local effect fn parse_table_key(t: String, p: Int, is_arr: Bool) -> Result[(List[String], Int), String] = {
+  let (keys, np) = parse_key(t, skip_ws(t, p))!
+  let np2 = skip_ws(t, np)
+  if is_arr then {
+    let closed = peek(t, np2) == "]" and peek(t, np2 + 1) == "]"
+    guard closed else err("expected ']]' at ${loc(t, np2)}")
+    ok((keys, np2 + 2))
+  } else {
+    guard peek(t, np2) == "]" else err("expected ']' at ${loc(t, np2)}")
+    ok((keys, np2 + 1))
+  }
+}
+
+// ── Key parsing ─────────────────────────────────────
+
+local effect fn parse_key(t: String, p: Int) -> Result[(List[String], Int), String] = {
+  let (first, np) = parse_key_part(t, p)!
+  collect_dotted_keys(t, np, [first])
+}
+
+local effect fn collect_dotted_keys(t: String, p: Int, acc: List[String]) -> Result[(List[String], Int), String] = {
+  let j = skip_ws(t, p)
+  if peek(t, j) == "." then {
+    let (k, np) = parse_key_part(t, skip_ws(t, j + 1))!
+    collect_dotted_keys(t, np, acc + [k])
+  } else {
+    ok((acc, p))
+  }
+}
+
+local effect fn parse_key_part(t: String, p: Int) -> Result[(String, Int), String] = {
+  let c = peek(t, p)
+  if c == "\"" then read_basic(t, p + 1, "")
+  else if c == "'" then parse_literal_string(t, p + 1)
+  else if is_bare(c) then {
+    let end = scan_while(t, p, (ch) => is_bare(ch))
+    ok((string.slice(t, p, end), end))
+  }
+  else err("expected key at ${loc(t, p)}")
+}
+
+// ── Value dispatch ──────────────────────────────────
+
+local effect fn parse_val(t: String, p: Int) -> Result[(Value, Int), String] = {
+  let c = peek(t, p)
+
+  if c == "\"" and peek(t, p+1) == "\"" and peek(t, p+2) == "\"" then {
+    let (s, np) = read_ml_basic(t, skip_leading_nl(t, p + 3), "")!
+    ok((value.str(s), np))
+  }
+  else if c == "\"" then {
+    let (s, np) = read_basic(t, p + 1, "")!
+    ok((value.str(s), np))
+  }
+  else if c == "'" and peek(t, p+1) == "'" and peek(t, p+2) == "'" then {
+    let (s, np) = read_ml_literal(t, skip_leading_nl(t, p + 3), "")!
+    ok((value.str(s), np))
+  }
+  else if c == "'" then {
+    let (s, np) = parse_literal_string(t, p + 1)!
+    ok((value.str(s), np))
+  }
+  else if c == "t" and string.slice(t, p, p + 4) == "true"  then ok((value.bool(true), p + 4))
+  else if c == "f" and string.slice(t, p, p + 5) == "false" then ok((value.bool(false), p + 5))
+  else if c == "[" then parse_array_val(t, p + 1)
+  else if c == "{" then parse_inline_table(t, p + 1)
+  else if match_special_float(t, p) then parse_special_float(t, p)
+  else if c == "+" or c == "-" or (c != "" and string.is_digit(c)) then parse_number_or_date(t, p)
+  else err("unexpected '${c}' at ${loc(t, p)}")
+}
+
+local fn match_special_float(t: String, p: Int) -> Bool = {
+  let s3 = string.slice(t, p, p + 3)
+  let s4 = string.slice(t, p, p + 4)
+  s3 == "nan" or s3 == "inf" or s4 == "+nan" or s4 == "+inf" or s4 == "-nan" or s4 == "-inf"
+}
+
+local fn parse_special_float(t: String, p: Int) -> Result[(Value, Int), String] = {
+  let s3 = string.slice(t, p, p + 3)
+  let s4 = string.slice(t, p, p + 4)
+  if s3 == "nan" then ok((value.float(0.0 / 0.0), p + 3))
+  else if s3 == "inf" then ok((value.float(1.0 / 0.0), p + 3))
+  else if s4 == "+nan" or s4 == "-nan" then ok((value.float(0.0 / 0.0), p + 4))
+  else if s4 == "+inf" then ok((value.float(1.0 / 0.0), p + 4))
+  else ok((value.float(-1.0 / 0.0), p + 4))
+}
+
+// ── String readers (recursive, no mutable buf) ──────
+
+local fn skip_leading_nl(t: String, p: Int) -> Int =
+  if peek(t, p) == "\r" and peek(t, p + 1) == "\n" then p + 2
+  else if peek(t, p) == "\n" then p + 1
+  else p
+
+local effect fn read_basic(t: String, p: Int, buf: String) -> Result[(String, Int), String] = {
+  guard p < string.len(t) else err("unterminated string at ${loc(t, p)}")
+  let c = peek(t, p)
+  if c == "\"" then ok((buf, p + 1))
+  else if c == "\\" then {
+    let (ch, np) = read_escape(t, p + 1)!
+    read_basic(t, np, buf + ch)
+  }
+  else read_basic(t, p + 1, buf + c)
+}
+
+local effect fn parse_literal_string(t: String, p: Int) -> Result[(String, Int), String] = {
+  let end = scan_while(t, p, (c) => c != "'")
+  guard end < string.len(t) else err("unterminated literal string at ${loc(t, p - 1)}")
+  ok((string.slice(t, p, end), end + 1))
+}
+
+local effect fn read_ml_basic(t: String, p: Int, buf: String) -> Result[(String, Int), String] = {
+  guard p < string.len(t) else err("unterminated multiline string at ${loc(t, p)}")
+  if peek(t, p) == "\"" and peek(t, p+1) == "\"" and peek(t, p+2) == "\"" then ok((buf, p + 3))
+  else if peek(t, p) == "\\" then {
+    let np = p + 1
+    if is_nl(peek(t, np)) then {
+      let np2 = scan_while(t, np, (c) => is_ws(c) or is_nl(c))
+      read_ml_basic(t, np2, buf)
+    } else {
+      let (ch, np2) = read_escape(t, np)!
+      read_ml_basic(t, np2, buf + ch)
+    }
+  }
+  else read_ml_basic(t, p + 1, buf + peek(t, p))
+}
+
+local effect fn read_ml_literal(t: String, p: Int, buf: String) -> Result[(String, Int), String] = {
+  guard p < string.len(t) else err("unterminated multiline literal string at ${loc(t, p)}")
+  if peek(t, p) == "'" and peek(t, p+1) == "'" and peek(t, p+2) == "'" then ok((buf, p + 3))
+  else read_ml_literal(t, p + 1, buf + peek(t, p))
+}
+
+local effect fn read_escape(t: String, p: Int) -> Result[(String, Int), String] =
+  match peek(t, p) {
+    "n"  => ok(("\n", p + 1)),
+    "t"  => ok(("\t", p + 1)),
+    "r"  => ok(("\r", p + 1)),
+    "\\" => ok(("\\", p + 1)),
+    "\"" => ok(("\"", p + 1)),
+    "b"  => ok((string.from_codepoint(8), p + 1)),
+    "f"  => ok((string.from_codepoint(12), p + 1)),
+    "u"  => { let cp = int.from_hex(string.slice(t, p+1, p+5))!; ok((string.from_codepoint(cp), p + 5)) },
+    "U"  => { let cp = int.from_hex(string.slice(t, p+1, p+9))!; ok((string.from_codepoint(cp), p + 9)) },
+    e    => err("invalid escape '\\${e}' at ${loc(t, p)}"),
+  }
+
+// ── Number / datetime ───────────────────────────────
+
+local effect fn parse_number_or_date(t: String, p: Int) -> Result[(Value, Int), String] = {
+  let end = scan_token(t, p)
+  let raw = string.slice(t, p, end)
+  let clean = string.replace(raw, "_", "")
+  let v = classify_token(clean, raw)!
+  ok((v, end))
+}
+
+local effect fn classify_token(clean: String, raw: String) -> Result[Value, String] = {
+  let dashes = string.count(clean, "-")
+  if (dashes >= 2 and string.len(clean) >= 10) or string.contains(clean, ":") then ok(value.str(raw))
+  else if string.starts_with(clean, "0x") or string.starts_with(clean, "0X") then
+    ok(value.int(int.from_hex(string.drop(clean, 2))!))
+  else if string.starts_with(clean, "0o") then
+    ok(value.int(parse_octal(string.drop(clean, 2))!))
+  else if string.starts_with(clean, "0b") then
+    ok(value.int(parse_binary(string.drop(clean, 2))!))
+  else if string.contains(clean, ".") or string.contains(clean, "e") or string.contains(clean, "E") then
+    ok(value.float(float.parse(clean)!))
+  else
+    ok(value.int(int.parse(clean)!))
+}
+
+local effect fn parse_octal(s: String) -> Result[Int, String] = {
+  var n = 0
+  for ch in string.chars(s) {
+    let d = (string.codepoint(ch) ?? 0) - 48
+    guard d >= 0 and d < 8 else err("invalid octal digit '${ch}'")
+    n = n * 8 + d
+  }
+  ok(n)
+}
+
+local effect fn parse_binary(s: String) -> Result[Int, String] = {
+  var n = 0
+  for ch in string.chars(s) {
+    guard ch == "0" or ch == "1" else err("invalid binary digit '${ch}'")
+    n = n * 2 + (if ch == "1" then 1 else 0)
+  }
+  ok(n)
+}
+
+// ── Array (recursive accumulation) ──────────────────
+
+local effect fn parse_array_val(t: String, p: Int) -> Result[(Value, Int), String] = {
+  let p2 = skip_trivia(t, p)
+  if peek(t, p2) == "]" then ok((value.array([]), p2 + 1))
+  else {
+    let (items, end) = collect_array_items(t, p2, [])!
+    ok((value.array(items), end))
+  }
+}
+
+local effect fn collect_array_items(t: String, p: Int, acc: List[Value]) -> Result[(List[Value], Int), String] = {
+  let (v, np) = parse_val(t, p)!
+  let items = acc + [v]
+  let np2 = skip_trivia(t, np)
+  if peek(t, np2) == "," then {
+    let np3 = skip_trivia(t, np2 + 1)
+    if peek(t, np3) == "]" then ok((items, np3 + 1))
+    else collect_array_items(t, np3, items)
+  } else {
+    guard peek(t, np2) == "]" else err("expected ']' at ${loc(t, np2)}")
+    ok((items, np2 + 1))
+  }
+}
+
+// ── Inline table (recursive accumulation) ───────────
+
+local effect fn parse_inline_table(t: String, p: Int) -> Result[(Value, Int), String] = {
+  let p2 = skip_ws(t, p)
+  if peek(t, p2) == "}" then ok((value.object([]), p2 + 1))
+  else collect_inline_entries(t, p2, value.object([]))
+}
+
+local effect fn collect_inline_entries(t: String, p: Int, acc: Value) -> Result[(Value, Int), String] = {
+  let (keys, p1) = parse_key(t, p)!
+  let p2 = skip_ws(t, p1)
+  guard peek(t, p2) == "=" else err("expected '=' in inline table at ${loc(t, p2)}")
+  let (v, p3) = parse_val(t, skip_ws(t, p2 + 1))!
+  let updated = set_nested(acc, keys, v)
+  let p4 = skip_ws(t, p3)
+  if peek(t, p4) == "," then collect_inline_entries(t, skip_ws(t, p4 + 1), updated)
+  else {
+    guard peek(t, p4) == "}" else err("expected '}' at ${loc(t, p4)}")
+    ok((updated, p4 + 1))
+  }
+}
+
+// ── Tree building ───────────────────────────────────
+
+local fn set_nested(root: Value, path: List[String], v: Value) -> Value =
+  match list.first(path) {
+    none => v,
+    some(key) => {
+      let rest = list.drop(path, 1)
+      let child = if list.is_empty(rest) then v
+                  else set_nested(value.get(root, key) ?? value.object([]), rest, v)
+      value.merge(root, value.object([(key, child)]))
+    },
+  }
+
+local fn append_aot(root: Value, path: List[String]) -> Value =
+  match list.first(path) {
+    none => root,
+    some(key) => {
+      let rest = list.drop(path, 1)
+      if list.is_empty(rest) then {
+        let arr = value.as_array(value.get(root, key) ?? value.object([])) ?? []
+        value.merge(root, value.object([(key, value.array(arr + [value.object([])]))]))
+      } else {
+        let child = value.get(root, key) ?? value.object([])
+        value.merge(root, value.object([(key, append_aot(child, rest))]))
+      }
+    },
+  }
+
+local fn set_in_aot_last(root: Value, aot_path: List[String], keys: List[String], v: Value) -> Value =
+  match list.first(aot_path) {
+    none => set_nested(root, keys, v),
+    some(key) => {
+      let rest = list.drop(aot_path, 1)
+      if list.is_empty(rest) then {
+        let items = value.as_array(value.get(root, key) ?? value.object([])) ?? []
+        let idx = list.len(items) - 1
+        if idx >= 0 then {
+          let updated = list.set(items, idx, set_nested(list.get(items, idx) ?? value.object([]), keys, v))
+          value.merge(root, value.object([(key, value.array(updated))]))
+        } else root
+      } else {
+        let child = value.get(root, key) ?? value.object([])
+        value.merge(root, value.object([(key, set_in_aot_last(child, rest, keys, v))]))
+      }
+    },
+  }
+
+// ── Serializer ──────────────────────────────────────
+
+local fn emit_sections(v: Value, path: List[String]) -> List[String] = {
+  let keys = json.keys(v)
+  let simple = keys |> list.filter_map((key) => {
+    let val = value.get(v, key) ?? value.null()
+    if not is_table(val) and not is_aot(val) then some("${emit_key(key)} = ${emit_val(val)}")
+    else none
+  })
+  let nested = keys |> list.flat_map((key) => {
+    let val = value.get(v, key) ?? value.null()
+    if is_aot(val) then
+      (value.as_array(val) ?? []) |> list.flat_map((item) =>
+        ["", "[[${emit_path(path + [key])}]]"] + emit_sections(item, path + [key])
+      )
+    else if is_table(val) then
+      ["", "[${emit_path(path + [key])}]"] + emit_sections(val, path + [key])
+    else []
+  })
+  let trimmed = if list.first(nested) == some("") then list.drop(nested, 1) else nested
+  let sep = if not list.is_empty(simple) and not list.is_empty(trimmed) then [""] else []
+  simple + sep + trimmed
+}
+
+local fn is_table(v: Value) -> Bool =
+  match value.as_string(v) { ok(_) => false, err(_) =>
+  match value.as_int(v)    { ok(_) => false, err(_) =>
+  match value.as_float(v)  { ok(_) => false, err(_) =>
+  match value.as_bool(v)   { ok(_) => false, err(_) =>
+  match value.as_array(v)  { ok(_) => false, err(_) =>
+  true }}}}}
+
+local fn is_aot(v: Value) -> Bool =
+  match value.as_array(v) {
+    ok(items) => if list.is_empty(items) then false
+                 else is_table(list.get(items, 0) ?? value.null()),
+    err(_) => false,
+  }
+
+local fn emit_key(k: String) -> String =
+  if string.len(k) == 0 then "\"\""
+  else if list.all(string.chars(k), (c) => is_bare(c)) then k
+  else "\"${escape_str(k)}\""
+
+local fn emit_path(path: List[String]) -> String =
+  path |> list.map((k) => emit_key(k)) |> list.join(".")
+
+local fn emit_val(v: Value) -> String =
+  match value.as_string(v) { ok(s) => "\"${escape_str(s)}\"", err(_) =>
+  match value.as_int(v)    { ok(n) => int.to_string(n), err(_) =>
+  match value.as_float(v)  { ok(f) => emit_float(f), err(_) =>
+  match value.as_bool(v)   { ok(b) => if b then "true" else "false", err(_) =>
+  match value.as_array(v)  { ok(items) => "[${items |> list.map((x) => emit_val(x)) |> list.join(", ")}]",
+  err(_) => emit_inline_obj(v) }}}}}
+
+local fn emit_float(f: Float) -> String =
+  if float.is_nan(f) then "nan"
+  else if float.is_infinite(f) then if f > 0.0 then "inf" else "-inf"
+  else {
+    let s = float.to_string(f)
+    if string.contains(s, ".") or string.contains(s, "e") then s else s + ".0"
+  }
+
+local fn emit_inline_obj(v: Value) -> String = {
+  let keys = json.keys(v)
+  if list.is_empty(keys) then "{ }"
+  else {
+    let pairs = keys |> list.map((k) => {
+      let val = value.get(v, k) ?? value.null()
+      "${emit_key(k)} = ${emit_val(val)}"
+    })
+    "{ ${list.join(pairs, ", ")} }"
+  }
+}
+
+local fn escape_str(s: String) -> String =
+  s |> string.replace("\\", "\\\\")
+    |> string.replace("\"", "\\\"")
+    |> string.replace("\n", "\\n")
+    |> string.replace("\t", "\\t")
+    |> string.replace("\r", "\\r")
