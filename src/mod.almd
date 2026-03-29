@@ -4,8 +4,6 @@
 //   toml.encode(config)           → Codec type to TOML string
 //   Config.decode(toml.parse(s)!) → TOML string to Codec type
 
-import value
-import json
 
 // ── Public API ──────────────────────────────────────
 
