@@ -3,47 +3,65 @@ import json
 import value
 
 type ServerConfig: Codec = { host: String, port: Int }
+
 type AppConfig: Codec = { name: String, version: String, debug: Bool }
+
 type Nested: Codec = { db: DbConfig }
+
 type DbConfig: Codec = { host: String, port: Int, pool_size: Int }
 
 fn unwrap(r: Result[Value, String]) -> Value = match r {
   ok(v) => v,
-  err(e) => { println("PARSE ERROR: ${e}"); value.null() },
+  err(e) => {
+    println("PARSE ERROR: ${e}");
+    value.null()
+  },
 }
 
-fn gs(v: Value, key: String) -> String =
-  match value.get(v, key) {
-    ok(inner) => match value.as_string(inner) { ok(s) => s, err(_) => "" },
+fn gs(v: Value, key: String) -> String = match value.get(v, key) {
+  ok(inner) => match value.as_string(inner) {
+    ok(s) => s,
     err(_) => "",
-  }
+  },
+  err(_) => "",
+}
 
-fn gi(v: Value, key: String) -> Int =
-  match value.get(v, key) {
-    ok(inner) => match value.as_int(inner) { ok(n) => n, err(_) => 0 },
+fn gi(v: Value, key: String) -> Int = match value.get(v, key) {
+  ok(inner) => match value.as_int(inner) {
+    ok(n) => n,
     err(_) => 0,
-  }
+  },
+  err(_) => 0,
+}
 
-fn gf(v: Value, key: String) -> Float =
-  match value.get(v, key) {
-    ok(inner) => match value.as_float(inner) { ok(f) => f, err(_) => 0.0 },
+fn gf(v: Value, key: String) -> Float = match value.get(v, key) {
+  ok(inner) => match value.as_float(inner) {
+    ok(f) => f,
     err(_) => 0.0,
-  }
+  },
+  err(_) => 0.0,
+}
 
-fn gb(v: Value, key: String) -> Bool =
-  match value.get(v, key) {
-    ok(inner) => match value.as_bool(inner) { ok(b) => b, err(_) => false },
+fn gb(v: Value, key: String) -> Bool = match value.get(v, key) {
+  ok(inner) => match value.as_bool(inner) {
+    ok(b) => b,
     err(_) => false,
-  }
+  },
+  err(_) => false,
+}
 
-fn go(v: Value, key: String) -> Value =
-  match value.get(v, key) { ok(x) => x, err(_) => value.object([]) }
+fn go(v: Value, key: String) -> Value = match value.get(v, key) {
+  ok(x) => x,
+  err(_) => value.object([]),
+}
 
-fn ga(v: Value, key: String) -> List[Value] =
-  match value.get(v, key) {
-    ok(inner) => match value.as_array(inner) { ok(xs) => xs, err(_) => [] },
+fn ga(v: Value, key: String) -> List[Value] = match value.get(v, key) {
+  ok(inner) => match value.as_array(inner) {
+    ok(xs) => xs,
     err(_) => [],
-  }
+  },
+  err(_) => [],
+}
 
 fn is_err(r: Result[Value, String]) -> Bool = match r {
   ok(_) => false,
@@ -53,9 +71,8 @@ fn is_err(r: Result[Value, String]) -> Bool = match r {
 // ═══════════════════════════════════════════════════════
 // Parse: primitives
 // ═══════════════════════════════════════════════════════
-
 test "string value" {
-  let v = unwrap(toml.parse("title = \"TOML Example\""));
+  let v = unwrap(toml.parse('title = "TOML Example"'));
   assert_eq(gs(v, "title"), "TOML Example")
 }
 
@@ -144,9 +161,8 @@ test "zero float" {
 // ═══════════════════════════════════════════════════════
 // Parse: strings
 // ═══════════════════════════════════════════════════════
-
 test "basic string escapes" {
-  let v = unwrap(toml.parse("s = \"hello\\nworld\\t!\""));
+  let v = unwrap(toml.parse('s = "hello\nworld\t!"'));
   assert_eq(gs(v, "s"), "hello\nworld\t!")
 }
 
@@ -156,7 +172,7 @@ test "literal string no escapes" {
 }
 
 test "empty basic string" {
-  let v = unwrap(toml.parse("s = \"\""));
+  let v = unwrap(toml.parse('s = ""'));
   assert_eq(gs(v, "s"), "")
 }
 
@@ -166,7 +182,7 @@ test "empty literal string" {
 }
 
 test "multiline basic string" {
-  let v = unwrap(toml.parse("s = \"\"\"\nhello\nworld\"\"\""));
+  let v = unwrap(toml.parse('s = """\nhello\nworld"""'));
   assert_eq(gs(v, "s"), "hello\nworld")
 }
 
@@ -176,24 +192,23 @@ test "multiline literal string" {
 }
 
 test "multiline basic line ending backslash" {
-  let v = unwrap(toml.parse("s = \"\"\"\nhello \\\n  world\"\"\""));
+  let v = unwrap(toml.parse('s = """\nhello \\\n  world"""'));
   assert_eq(gs(v, "s"), "hello world")
 }
 
 test "unicode escape 4-digit" {
-  let v = unwrap(toml.parse("s = \"\\u0041\""));
+  let v = unwrap(toml.parse('s = "\\u0041"'));
   assert_eq(gs(v, "s"), "A")
 }
 
 test "backslash escapes" {
-  let v = unwrap(toml.parse("s = \"\\\\\\\"\""));
-  assert_eq(gs(v, "s"), "\\\"")
+  let v = unwrap(toml.parse('s = "\\\\\\""'));
+  assert_eq(gs(v, "s"), '\\"')
 }
 
 // ═══════════════════════════════════════════════════════
 // Parse: keys
 // ═══════════════════════════════════════════════════════
-
 test "bare key" {
   let v = unwrap(toml.parse("key = 1"));
   assert_eq(gi(v, "key"), 1)
@@ -205,7 +220,7 @@ test "bare key with dash" {
 }
 
 test "quoted key basic" {
-  let v = unwrap(toml.parse("\"key with spaces\" = 1"));
+  let v = unwrap(toml.parse('"key with spaces" = 1'));
   assert_eq(gi(v, "key with spaces"), 1)
 }
 
@@ -229,32 +244,28 @@ test "dotted key multiple assignments" {
 // ═══════════════════════════════════════════════════════
 // Parse: tables
 // ═══════════════════════════════════════════════════════
-
 test "simple table" {
-  let v = unwrap(toml.parse("[server]\nhost = \"localhost\"\nport = 3000"));
+  let v = unwrap(toml.parse('[server]\nhost = "localhost"\nport = 3000'));
   let srv = go(v, "server");
   assert_eq(gs(srv, "host"), "localhost");
   assert_eq(gi(srv, "port"), 3000)
 }
 
 test "nested table" {
-  let input = "[database.primary]\nhost = \"db1\"\n\n[database.replica]\nhost = \"db2\"";
-  let v = unwrap(toml.parse(input));
+  let v = unwrap(toml.parse('[database.primary]\nhost = "db1"\n\n[database.replica]\nhost = "db2"'));
   let db = go(v, "database");
   assert_eq(gs(go(db, "primary"), "host"), "db1");
   assert_eq(gs(go(db, "replica"), "host"), "db2")
 }
 
 test "top-level and table keys" {
-  let input = "name = \"app\"\n\n[server]\nport = 80";
-  let v = unwrap(toml.parse(input));
+  let v = unwrap(toml.parse('name = "app"\n\n[server]\nport = 80'));
   assert_eq(gs(v, "name"), "app");
   assert_eq(gi(go(v, "server"), "port"), 80)
 }
 
 test "multiple tables" {
-  let input = "[a]\nx = 1\n[b]\ny = 2\n[c]\nz = 3";
-  let v = unwrap(toml.parse(input));
+  let v = unwrap(toml.parse("[a]\nx = 1\n[b]\ny = 2\n[c]\nz = 3"));
   assert_eq(gi(go(v, "a"), "x"), 1);
   assert_eq(gi(go(v, "b"), "y"), 2);
   assert_eq(gi(go(v, "c"), "z"), 3)
@@ -263,14 +274,13 @@ test "multiple tables" {
 // ═══════════════════════════════════════════════════════
 // Parse: arrays
 // ═══════════════════════════════════════════════════════
-
 test "integer array" {
   let v = unwrap(toml.parse("nums = [1, 2, 3]"));
   assert_eq(list.len(ga(v, "nums")), 3)
 }
 
 test "string array" {
-  let v = unwrap(toml.parse("tags = [\"a\", \"b\"]"));
+  let v = unwrap(toml.parse('tags = ["a", "b"]'));
   let arr = ga(v, "tags");
   assert_eq(list.len(arr), 2)
 }
@@ -300,10 +310,8 @@ test "multiline array" {
 // ═══════════════════════════════════════════════════════
 // Parse: array of tables
 // ═══════════════════════════════════════════════════════
-
 test "array of tables" {
-  let input = "[[products]]\nname = \"A\"\n\n[[products]]\nname = \"B\"";
-  let v = unwrap(toml.parse(input));
+  let v = unwrap(toml.parse('[[products]]\nname = "A"\n\n[[products]]\nname = "B"'));
   let prods = ga(v, "products");
   assert_eq(list.len(prods), 2);
   assert_eq(gs(list.get(prods, 0) ?? value.object([]), "name"), "A");
@@ -311,8 +319,7 @@ test "array of tables" {
 }
 
 test "aot with sub-keys" {
-  let input = "[[items]]\nname = \"x\"\ncount = 3\n\n[[items]]\nname = \"y\"\ncount = 7";
-  let v = unwrap(toml.parse(input));
+  let v = unwrap(toml.parse('[[items]]\nname = "x"\ncount = 3\n\n[[items]]\nname = "y"\ncount = 7'));
   let items = ga(v, "items");
   assert_eq(gi(list.get(items, 0) ?? value.object([]), "count"), 3);
   assert_eq(gi(list.get(items, 1) ?? value.object([]), "count"), 7)
@@ -321,7 +328,6 @@ test "aot with sub-keys" {
 // ═══════════════════════════════════════════════════════
 // Parse: inline table
 // ═══════════════════════════════════════════════════════
-
 test "inline table" {
   let v = unwrap(toml.parse("pt = { x = 1, y = 2 }"));
   let pt = go(v, "pt");
@@ -344,10 +350,8 @@ test "inline table with dotted key" {
 // ═══════════════════════════════════════════════════════
 // Parse: comments & whitespace
 // ═══════════════════════════════════════════════════════
-
 test "comments" {
-  let input = "# header\nkey = \"val\" # inline";
-  let v = unwrap(toml.parse(input));
+  let v = unwrap(toml.parse('# header\nkey = "val" # inline'));
   assert_eq(gs(v, "key"), "val")
 }
 
@@ -376,7 +380,6 @@ test "crlf line endings" {
 // ═══════════════════════════════════════════════════════
 // Parse: datetime (stored as string)
 // ═══════════════════════════════════════════════════════
-
 test "offset datetime" {
   let v = unwrap(toml.parse("dt = 1979-05-27T07:32:00Z"));
   assert_eq(gs(v, "dt"), "1979-05-27T07:32:00Z")
@@ -400,13 +403,12 @@ test "local time" {
 // ═══════════════════════════════════════════════════════
 // Parse: error cases
 // ═══════════════════════════════════════════════════════
-
 test "error: missing equals" {
   assert(is_err(toml.parse("key value")))
 }
 
 test "error: unterminated string" {
-  assert(is_err(toml.parse("s = \"hello")))
+  assert(is_err(toml.parse('s = "hello')))
 }
 
 test "error: unterminated table header" {
@@ -416,29 +418,30 @@ test "error: unterminated table header" {
 // ═══════════════════════════════════════════════════════
 // Stringify
 // ═══════════════════════════════════════════════════════
-
 test "stringify simple" {
   let obj = value.object([("name", value.str("test")), ("port", value.int(80))]);
   let text = toml.stringify(obj);
-  assert(string.contains(text, "name = \"test\""));
+  assert(string.contains(text, 'name = "test"'));
   assert(string.contains(text, "port = 80"))
 }
 
 test "stringify nested table" {
   let obj = value.object([
     ("name", value.str("app")),
-    ("server", value.object([("host", value.str("localhost")), ("port", value.int(3000))])),
+    ("server", value.object([("host", value.str("localhost")), ("port", value.int(3000))]))
   ]);
   let text = toml.stringify(obj);
-  assert(string.contains(text, "name = \"app\""));
+  assert(string.contains(text, 'name = "app"'));
   assert(string.contains(text, "[server]"));
-  assert(string.contains(text, "host = \"localhost\""))
+  assert(string.contains(text, 'host = "localhost"'))
 }
 
 test "stringify array" {
-  let obj = value.object([("tags", value.array([value.str("a"), value.str("b")]))]);
+  let obj = value.object([
+    ("tags", value.array([value.str("a"), value.str("b")]))
+  ]);
   let text = toml.stringify(obj);
-  assert(string.contains(text, "[\"a\", \"b\"]"))
+  assert(string.contains(text, '["a", "b"]'))
 }
 
 test "stringify boolean" {
@@ -460,13 +463,8 @@ test "stringify empty object" {
 // ═══════════════════════════════════════════════════════
 // Roundtrip: parse → stringify → parse
 // ═══════════════════════════════════════════════════════
-
 test "roundtrip simple" {
-  let obj = value.object([
-    ("host", value.str("localhost")),
-    ("port", value.int(8080)),
-    ("debug", value.bool(false)),
-  ]);
+  let obj = value.object([("host", value.str("localhost")), ("port", value.int(8080)), ("debug", value.bool(false))]);
   let text = toml.stringify(obj);
   let v = unwrap(toml.parse(text));
   assert_eq(gs(v, "host"), "localhost");
@@ -477,10 +475,7 @@ test "roundtrip simple" {
 test "roundtrip nested" {
   let obj = value.object([
     ("app", value.str("demo")),
-    ("db", value.object([
-      ("host", value.str("pg.local")),
-      ("port", value.int(5432)),
-    ])),
+    ("db", value.object([("host", value.str("pg.local")), ("port", value.int(5432))]))
   ]);
   let text = toml.stringify(obj);
   let v = unwrap(toml.parse(text));
@@ -492,11 +487,10 @@ test "roundtrip nested" {
 // ═══════════════════════════════════════════════════════
 // Codec integration
 // ═══════════════════════════════════════════════════════
-
 test "codec encode" {
   let cfg = ServerConfig { host: "0.0.0.0", port: 3000 };
   let text = toml.encode(cfg);
-  assert(string.contains(text, "host = \"0.0.0.0\""));
+  assert(string.contains(text, 'host = "0.0.0.0"'));
   assert(string.contains(text, "port = 3000"))
 }
 
