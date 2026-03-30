@@ -1,6 +1,5 @@
 import self as toml
 import json
-import value
 
 type ServerConfig: Codec = { host: String, port: Int }
 
