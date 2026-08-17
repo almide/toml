@@ -1,5 +1,4 @@
 import self as toml
-import json
 
 type ServerConfig: Codec = { host: String, port: Int }
 
@@ -17,7 +16,7 @@ fn unwrap(r: Result[Value, String]) -> Value = match r {
   },
 }
 
-fn gs(v: Value, key: String) -> String = match value.get(v, key) {
+fn gs(v: Value, key: String) -> String = match value.field(v, key) {
   ok(inner) => match value.as_string(inner) {
     ok(s) => s,
     err(_) => "",
@@ -25,7 +24,7 @@ fn gs(v: Value, key: String) -> String = match value.get(v, key) {
   err(_) => "",
 }
 
-fn gi(v: Value, key: String) -> Int = match value.get(v, key) {
+fn gi(v: Value, key: String) -> Int = match value.field(v, key) {
   ok(inner) => match value.as_int(inner) {
     ok(n) => n,
     err(_) => 0,
@@ -33,7 +32,7 @@ fn gi(v: Value, key: String) -> Int = match value.get(v, key) {
   err(_) => 0,
 }
 
-fn gf(v: Value, key: String) -> Float = match value.get(v, key) {
+fn gf(v: Value, key: String) -> Float = match value.field(v, key) {
   ok(inner) => match value.as_float(inner) {
     ok(f) => f,
     err(_) => 0.0,
@@ -41,7 +40,7 @@ fn gf(v: Value, key: String) -> Float = match value.get(v, key) {
   err(_) => 0.0,
 }
 
-fn gb(v: Value, key: String) -> Bool = match value.get(v, key) {
+fn gb(v: Value, key: String) -> Bool = match value.field(v, key) {
   ok(inner) => match value.as_bool(inner) {
     ok(b) => b,
     err(_) => false,
@@ -49,12 +48,12 @@ fn gb(v: Value, key: String) -> Bool = match value.get(v, key) {
   err(_) => false,
 }
 
-fn go(v: Value, key: String) -> Value = match value.get(v, key) {
+fn go(v: Value, key: String) -> Value = match value.field(v, key) {
   ok(x) => x,
   err(_) => value.object([]),
 }
 
-fn ga(v: Value, key: String) -> List[Value] = match value.get(v, key) {
+fn ga(v: Value, key: String) -> List[Value] = match value.field(v, key) {
   ok(inner) => match value.as_array(inner) {
     ok(xs) => xs,
     err(_) => [],
@@ -336,7 +335,7 @@ test "inline table" {
 
 test "empty inline table" {
   let v = unwrap(toml.parse("empty = {}"));
-  assert_eq(list.len(json.keys(go(v, "empty"))), 0)
+  assert_eq(list.len(value.keys(go(v, "empty"))), 0)
 }
 
 test "inline table with dotted key" {
@@ -356,12 +355,12 @@ test "comments" {
 
 test "empty input" {
   let v = unwrap(toml.parse(""));
-  assert_eq(json.keys(v), [])
+  assert_eq(value.keys(v), [])
 }
 
 test "only comments" {
   let v = unwrap(toml.parse("# comment\n# another"));
-  assert_eq(json.keys(v), [])
+  assert_eq(value.keys(v), [])
 }
 
 test "blank lines between kv" {
