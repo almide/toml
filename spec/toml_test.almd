@@ -336,7 +336,7 @@ test "inline table" {
 
 test "empty inline table" {
   let v = unwrap(toml.parse("empty = {}"));
-  assert_eq(list.len(json.keys(go(v, "empty"))), 0)
+  assert_eq(list.len(((value.as_object(go(v, "empty")) ?? []) |> list.map(((k, _)) => k))), 0)
 }
 
 test "inline table with dotted key" {
@@ -356,12 +356,12 @@ test "comments" {
 
 test "empty input" {
   let v = unwrap(toml.parse(""));
-  assert_eq(json.keys(v), [])
+  assert_eq(((value.as_object(v) ?? []) |> list.map(((k, _)) => k)), [])
 }
 
 test "only comments" {
   let v = unwrap(toml.parse("# comment\n# another"));
-  assert_eq(json.keys(v), [])
+  assert_eq(((value.as_object(v) ?? []) |> list.map(((k, _)) => k)), [])
 }
 
 test "blank lines between kv" {
@@ -418,7 +418,7 @@ test "error: unterminated table header" {
 // Stringify
 // ═══════════════════════════════════════════════════════
 test "stringify simple" {
-  let obj = value.object([("name", value.str("test")), ("port", value.int(80))]);
+  let obj = value.object([("name", value.string("test")), ("port", value.int(80))]);
   let text = toml.stringify(obj);
   assert(string.contains(text, 'name = "test"'));
   assert(string.contains(text, "port = 80"))
@@ -426,8 +426,8 @@ test "stringify simple" {
 
 test "stringify nested table" {
   let obj = value.object([
-    ("name", value.str("app")),
-    ("server", value.object([("host", value.str("localhost")), ("port", value.int(3000))]))
+    ("name", value.string("app")),
+    ("server", value.object([("host", value.string("localhost")), ("port", value.int(3000))]))
   ]);
   let text = toml.stringify(obj);
   assert(string.contains(text, 'name = "app"'));
@@ -437,7 +437,7 @@ test "stringify nested table" {
 
 test "stringify array" {
   let obj = value.object([
-    ("tags", value.array([value.str("a"), value.str("b")]))
+    ("tags", value.array([value.string("a"), value.string("b")]))
   ]);
   let text = toml.stringify(obj);
   assert(string.contains(text, '["a", "b"]'))
@@ -463,7 +463,7 @@ test "stringify empty object" {
 // Roundtrip: parse → stringify → parse
 // ═══════════════════════════════════════════════════════
 test "roundtrip simple" {
-  let obj = value.object([("host", value.str("localhost")), ("port", value.int(8080)), ("debug", value.bool(false))]);
+  let obj = value.object([("host", value.string("localhost")), ("port", value.int(8080)), ("debug", value.bool(false))]);
   let text = toml.stringify(obj);
   let v = unwrap(toml.parse(text));
   assert_eq(gs(v, "host"), "localhost");
@@ -473,8 +473,8 @@ test "roundtrip simple" {
 
 test "roundtrip nested" {
   let obj = value.object([
-    ("app", value.str("demo")),
-    ("db", value.object([("host", value.str("pg.local")), ("port", value.int(5432))]))
+    ("app", value.string("demo")),
+    ("db", value.object([("host", value.string("pg.local")), ("port", value.int(5432))]))
   ]);
   let text = toml.stringify(obj);
   let v = unwrap(toml.parse(text));

@@ -70,7 +70,7 @@ local fn scan_token(t: String, p: Int) -> Int = {
 
 local fn loc(t: String, p: Int) -> String = {
   let before = if p > 0 then string.slice(t, 0, p) else ""
-  let line = string.count(before, "\n") + 1
+  let line = string.count_matches(before, "\n") + 1
   let col = p - (match string.last_index_of(before, "\n") { some(i) => i, none => -1 })
   "line ${int.to_string(line)}, col ${int.to_string(col)}"
 }
@@ -152,19 +152,19 @@ local effect fn parse_val(t: String, p: Int) -> Result[(Value, Int), String] = {
 
   if c == "\"" and peek(t, p+1) == "\"" and peek(t, p+2) == "\"" then {
     let (s, np) = read_ml_basic(t, skip_leading_nl(t, p + 3), "")!
-    ok((value.str(s), np))
+    ok((value.string(s), np))
   }
   else if c == "\"" then {
     let (s, np) = read_basic(t, p + 1, "")!
-    ok((value.str(s), np))
+    ok((value.string(s), np))
   }
   else if c == "'" and peek(t, p+1) == "'" and peek(t, p+2) == "'" then {
     let (s, np) = read_ml_literal(t, skip_leading_nl(t, p + 3), "")!
-    ok((value.str(s), np))
+    ok((value.string(s), np))
   }
   else if c == "'" then {
     let (s, np) = parse_literal_string(t, p + 1)!
-    ok((value.str(s), np))
+    ok((value.string(s), np))
   }
   else if c == "t" and string.slice(t, p, p + 4) == "true"  then ok((value.bool(true), p + 4))
   else if c == "f" and string.slice(t, p, p + 5) == "false" then ok((value.bool(false), p + 5))
@@ -244,10 +244,10 @@ local effect fn read_escape(t: String, p: Int) -> Result[(String, Int), String] 
     "r"  => ok(("\r", p + 1)),
     "\\" => ok(("\\", p + 1)),
     "\"" => ok(("\"", p + 1)),
-    "b"  => ok((string.from_codepoint(8), p + 1)),
-    "f"  => ok((string.from_codepoint(12), p + 1)),
-    "u"  => { let cp = int.from_hex(string.slice(t, p+1, p+5))!; ok((string.from_codepoint(cp), p + 5)) },
-    "U"  => { let cp = int.from_hex(string.slice(t, p+1, p+9))!; ok((string.from_codepoint(cp), p + 9)) },
+    "b"  => ok((string.from_codepoint(8) ?? "", p + 1)),
+    "f"  => ok((string.from_codepoint(12) ?? "", p + 1)),
+    "u"  => { let cp = int.parse_radix(string.slice(t, p+1, p+5), 16)!; ok((string.from_codepoint(cp) ?? "", p + 5)) },
+    "U"  => { let cp = int.parse_radix(string.slice(t, p+1, p+9), 16)!; ok((string.from_codepoint(cp) ?? "", p + 9)) },
     e    => err("invalid escape '\\${e}' at ${loc(t, p)}"),
   }
 
@@ -262,10 +262,10 @@ local effect fn parse_number_or_date(t: String, p: Int) -> Result[(Value, Int), 
 }
 
 local effect fn classify_token(clean: String, raw: String) -> Result[Value, String] = {
-  let dashes = string.count(clean, "-")
-  if (dashes >= 2 and string.len(clean) >= 10) or string.contains(clean, ":") then ok(value.str(raw))
+  let dashes = string.count_matches(clean, "-")
+  if (dashes >= 2 and string.len(clean) >= 10) or string.contains(clean, ":") then ok(value.string(raw))
   else if string.starts_with(clean, "0x") or string.starts_with(clean, "0X") then
-    ok(value.int(int.from_hex(string.drop(clean, 2))!))
+    ok(value.int(int.parse_radix(string.drop(clean, 2), 16)!))
   else if string.starts_with(clean, "0o") then
     ok(value.int(parse_octal(string.drop(clean, 2))!))
   else if string.starts_with(clean, "0b") then
@@ -278,8 +278,8 @@ local effect fn classify_token(clean: String, raw: String) -> Result[Value, Stri
 
 local effect fn parse_octal(s: String) -> Result[Int, String] = {
   var n = 0
-  for ch in string.chars(s) {
-    let d = (string.codepoint(ch) ?? 0) - 48
+  for ch in string.to_list(s) {
+    let d = (string.to_codepoint(ch) ?? 0) - 48
     guard d >= 0 and d < 8 else err("invalid octal digit '${ch}'")
     n = n * 8 + d
   }
@@ -288,7 +288,7 @@ local effect fn parse_octal(s: String) -> Result[Int, String] = {
 
 local effect fn parse_binary(s: String) -> Result[Int, String] = {
   var n = 0
-  for ch in string.chars(s) {
+  for ch in string.to_list(s) {
     guard ch == "0" or ch == "1" else err("invalid binary digit '${ch}'")
     n = n * 2 + (if ch == "1" then 1 else 0)
   }
@@ -392,7 +392,7 @@ local fn set_in_aot_last(root: Value, aot_path: List[String], keys: List[String]
 // ── Serializer ──────────────────────────────────────
 
 local fn emit_sections(v: Value, path: List[String]) -> List[String] = {
-  let keys = json.keys(v)
+  let keys = (value.as_object(v) ?? []) |> list.map(((k, _)) => k)
   let simple = keys |> list.filter_map((key) => {
     let val = value.get(v, key) ?? value.null()
     if not is_table(val) and not is_aot(val) then some("${emit_key(key)} = ${emit_val(val)}")
@@ -430,7 +430,7 @@ local fn is_aot(v: Value) -> Bool =
 
 local fn emit_key(k: String) -> String =
   if string.len(k) == 0 then "\"\""
-  else if list.all(string.chars(k), (c) => is_bare(c)) then k
+  else if list.all(string.to_list(k), (c) => is_bare(c)) then k
   else "\"${escape_str(k)}\""
 
 local fn emit_path(path: List[String]) -> String =
@@ -453,7 +453,7 @@ local fn emit_float(f: Float) -> String =
   }
 
 local fn emit_inline_obj(v: Value) -> String = {
-  let keys = json.keys(v)
+  let keys = (value.as_object(v) ?? []) |> list.map(((k, _)) => k)
   if list.is_empty(keys) then "{ }"
   else {
     let pairs = keys |> list.map((k) => {
