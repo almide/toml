@@ -1,10 +1,8 @@
 // almide/toml — TOML parser and serializer for Almide
 //
 // Codec-compatible: provides parse + stringify, so
-//   toml.encode(config)           → Codec type to TOML string
-//   Config.decode(toml.parse(s)!) → TOML string to Codec type
-
-import json
+//   toml.stringify(Config.encode(config)) → Codec type to TOML string
+//   Config.decode(toml.parse(s)!)          → TOML string to Codec type
 
 // ── Public API ──────────────────────────────────────
 

@@ -488,14 +488,14 @@ test "roundtrip nested" {
 // ═══════════════════════════════════════════════════════
 test "codec encode" {
   let cfg = ServerConfig { host: "0.0.0.0", port: 3000 };
-  let text = toml.encode(cfg);
+  let text = toml.stringify(ServerConfig.encode(cfg));
   assert(string.contains(text, 'host = "0.0.0.0"'));
   assert(string.contains(text, "port = 3000"))
 }
 
 test "codec roundtrip" {
   let cfg = ServerConfig { host: "db.example.com", port: 5432 };
-  let text = toml.encode(cfg);
+  let text = toml.stringify(ServerConfig.encode(cfg));
   match toml.parse(text) {
     ok(v) => match ServerConfig.decode(v) {
       ok(cfg2) => {
@@ -510,7 +510,7 @@ test "codec roundtrip" {
 
 test "codec roundtrip 3 fields" {
   let cfg = AppConfig { name: "myapp", version: "1.0.0", debug: true };
-  let text = toml.encode(cfg);
+  let text = toml.stringify(AppConfig.encode(cfg));
   match toml.parse(text) {
     ok(v) => match AppConfig.decode(v) {
       ok(c) => {

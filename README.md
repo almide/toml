@@ -33,7 +33,7 @@ import toml
 type ServerConfig: Codec = { host: String, port: Int, debug: Bool }
 
 // Encode a typed record to TOML string
-let text = toml.encode(ServerConfig { host: "0.0.0.0", port: 3000, debug: true })
+let text = toml.stringify(ServerConfig.encode(ServerConfig { host: "0.0.0.0", port: 3000, debug: true }))
 
 // Decode TOML string to a typed record
 let config = ServerConfig.decode(toml.parse(text)!)!
@@ -45,10 +45,7 @@ let config = ServerConfig.decode(toml.parse(text)!)!
 |---|---|---|
 | `toml.parse` | `(String) -> Result[Value, String]` | Parse TOML text into a Value |
 | `toml.stringify` | `(Value) -> String` | Serialize a Value to TOML text |
-| `toml.encode` | `(T: Codec) -> String` | Encode a Codec type to TOML (via Codec protocol) |
-| `toml.decode[T]` | `(String) -> Result[T, String]` | Decode TOML to a Codec type (via Codec protocol) |
-
-`encode` and `decode` work automatically with any type that derives `Codec` — no extra implementation needed.
+A type that derives `Codec` goes to TOML as `toml.stringify(T.encode(x))` and comes back as `T.decode(toml.parse(s)!)` — no extra implementation needed.
 
 ## Supported TOML Features
 
